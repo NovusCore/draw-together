@@ -18,7 +18,7 @@ import { throttle, THROTTLE_INTERVAL } from '@/lib/throttle';
 
 interface DrawObject {
   id: string;
-  type: 'line' | 'text' | 'rectangle' | 'circle' | 'triangle';
+  type: 'line' | 'text' | 'rectangle' | 'circle' | 'triangle' | 'eraser';
   x: number;
   y: number;
   points?: Array<{ x: number; y: number }>;
@@ -60,7 +60,7 @@ export const DrawingCanvas = React.forwardRef<HTMLCanvasElement, DrawingCanvasPr
       color: '#000000',
       size: 3,
     });
-    const [tool, setTool] = useState<'brush' | 'text' | 'rectangle' | 'circle' | 'triangle' | 'eyedropper' | 'move'>('brush');
+    const [tool, setTool] = useState<'brush' | 'text' | 'rectangle' | 'circle' | 'triangle' | 'eyedropper' | 'move' | 'eraser'>('brush');
     const [shapesFilled, setShapesFilled] = useState(false);
     const [textInput, setTextInput] = useState('');
     const [fontSize, setFontSize] = useState(16);
@@ -68,6 +68,9 @@ export const DrawingCanvas = React.forwardRef<HTMLCanvasElement, DrawingCanvasPr
     const [editingObjectId, setEditingObjectId] = useState<string | null>(null);
     const [objects, setObjects] = useState<DrawObject[]>([]);
     const [selectedObjectId, setSelectedObjectId] = useState<string | null>(null);
+    const [isDarkTheme, setIsDarkTheme] = useState(false);
+    const [showShapesMenu, setShowShapesMenu] = useState(false);
+    const [currentStrokeId, setCurrentStrokeId] = useState<string | null>(null);
     const lastPointRef = useRef<{ x: number; y: number } | null>(null);
     const currentPointRef = useRef<{ x: number; y: number } | null>(null);
     const currentStrokeRef = useRef<Array<{ x: number; y: number }>>([]);
@@ -83,7 +86,7 @@ export const DrawingCanvas = React.forwardRef<HTMLCanvasElement, DrawingCanvasPr
         setupCanvasForRetina(canvas);
 
         const ctx = canvas.getContext('2d')!;
-        ctx.fillStyle = 'white';
+        ctx.fillStyle = isDarkTheme ? '#1f2937' : 'white';
         ctx.fillRect(0, 0, canvas.clientWidth, canvas.clientHeight);
       };
 
@@ -95,7 +98,7 @@ export const DrawingCanvas = React.forwardRef<HTMLCanvasElement, DrawingCanvasPr
       return () => {
         resizeObserver.disconnect();
       };
-    }, []);
+    }, [isDarkTheme]);
 
     // Перерисовка всех объектов
     const getTextLines = (text: string) => text.split(/\r?\n/);
@@ -106,6 +109,7 @@ export const DrawingCanvas = React.forwardRef<HTMLCanvasElement, DrawingCanvasPr
 
       ctx.font = `${obj.fontSize || 16}px Arial`;
       ctx.textBaseline = 'top';
+      ctx.fillStyle = obj.color;
       lines.forEach((line, index) => {
         ctx.fillText(line, obj.x, obj.y + index * lineHeight);
       });
@@ -135,7 +139,7 @@ export const DrawingCanvas = React.forwardRef<HTMLCanvasElement, DrawingCanvasPr
       if (!canvas) return;
 
       const ctx = canvas.getContext('2d')!;
-      ctx.fillStyle = 'white';
+      ctx.fillStyle = isDarkTheme ? '#1f2937' : 'white';
       ctx.fillRect(0, 0, canvas.clientWidth, canvas.clientHeight);
 
       objects.forEach((obj) => {
@@ -153,6 +157,7 @@ export const DrawingCanvas = React.forwardRef<HTMLCanvasElement, DrawingCanvasPr
         }
 
         if (obj.type === 'line' && obj.points && obj.points.length > 0) {
+          ctx.globalCompositeOperation = 'source-over';
           ctx.beginPath();
           ctx.moveTo(obj.points[0].x, obj.points[0].y);
           obj.points.slice(1).forEach((point) => {
@@ -160,19 +165,34 @@ export const DrawingCanvas = React.forwardRef<HTMLCanvasElement, DrawingCanvasPr
           });
           ctx.stroke();
           ctx.closePath();
+        } else if (obj.type === 'eraser' && obj.points && obj.points.length > 0) {
+          ctx.globalCompositeOperation = 'destination-out';
+          ctx.strokeStyle = 'rgba(0,0,0,1)';
+          ctx.beginPath();
+          ctx.moveTo(obj.points[0].x, obj.points[0].y);
+          obj.points.slice(1).forEach((point) => {
+            ctx.lineTo(point.x, point.y);
+          });
+          ctx.stroke();
+          ctx.closePath();
+          ctx.globalCompositeOperation = 'source-over';
         } else if (obj.type === 'text') {
+          ctx.globalCompositeOperation = 'source-over';
           drawTextObject(ctx, obj);
         } else if (obj.type === 'rectangle') {
+          ctx.globalCompositeOperation = 'source-over';
           drawRectangle(ctx, obj.x, obj.y, obj.width || 0, obj.height || 0, obj.filled);
         } else if (obj.type === 'circle') {
+          ctx.globalCompositeOperation = 'source-over';
           drawCircle(ctx, obj.x, obj.y, obj.radius || 0, obj.filled);
         } else if (obj.type === 'triangle') {
+          ctx.globalCompositeOperation = 'source-over';
           drawTriangle(ctx, obj.x, obj.y, obj.x2 || 0, obj.y2 || 0, obj.x3 || 0, obj.y3 || 0, obj.filled);
         }
 
         ctx.setLineDash([]);
       });
-    }, [objects, selectedObjectId]);
+    }, [objects, selectedObjectId, isDarkTheme]);
 
     // Перерисовка при изменении объектов
     useEffect(() => {
@@ -204,7 +224,7 @@ export const DrawingCanvas = React.forwardRef<HTMLCanvasElement, DrawingCanvasPr
     const findObjectAtPosition = (x: number, y: number): DrawObject | null => {
       for (let i = objects.length - 1; i >= 0; i--) {
         const obj = objects[i];
-        const hitArea = 20; // Область попадания в пиксели
+        const hitArea = 20;
 
         if (obj.type === 'text' && obj.text) {
           const { width, height } = getTextBounds(obj);
@@ -270,12 +290,25 @@ export const DrawingCanvas = React.forwardRef<HTMLCanvasElement, DrawingCanvasPr
       setIsDrawing(true);
       strokeStartTimeRef.current = Date.now();
       lastPointRef.current = pos;
+      currentStrokeRef.current = [pos];
 
-      if (tool === 'brush') {
-        applyBrushConfig(ctx, brushConfig);
-        drawPoint(ctx, pos.x, pos.y);
+      if (tool === 'brush' || tool === 'eraser') {
+        const strokeId = Math.random().toString();
+        setCurrentStrokeId(strokeId);
 
-        if (onDrawStart) {
+        const newStroke: DrawObject = {
+          id: strokeId,
+          type: tool === 'eraser' ? 'eraser' : 'line',
+          x: pos.x,
+          y: pos.y,
+          points: [pos],
+          color: brushConfig.color,
+          size: brushConfig.size,
+        };
+
+        setObjects((prev) => [...prev, newStroke]);
+
+        if (onDrawStart && tool === 'brush') {
           onDrawStart(pos.x, pos.y, brushConfig.color, brushConfig.size);
         }
       }
@@ -289,7 +322,6 @@ export const DrawingCanvas = React.forwardRef<HTMLCanvasElement, DrawingCanvasPr
       const pos = getMousePos(canvas, e.nativeEvent);
       currentPointRef.current = pos;
 
-      // Режим перемещения
       if (tool === 'move' && isDrawing && selectedObjectId && dragOffsetRef.current) {
         const newX = pos.x - dragOffsetRef.current.x;
         const newY = pos.y - dragOffsetRef.current.y;
@@ -315,42 +347,23 @@ export const DrawingCanvas = React.forwardRef<HTMLCanvasElement, DrawingCanvasPr
       if (!isDrawing) return;
       if (tool === 'eyedropper' || tool === 'text') return;
 
-      const ctx = canvas.getContext('2d')!;
+      if (tool === 'brush' || tool === 'eraser') {
+        if (!lastPointRef.current || !currentStrokeId) return;
 
-      if (tool === 'brush') {
-        if (!lastPointRef.current) return;
-        applyBrushConfig(ctx, brushConfig);
-        drawLine(ctx, lastPointRef.current.x, lastPointRef.current.y, pos.x, pos.y);
+        setObjects((prev) =>
+          prev.map((obj) =>
+            obj.id === currentStrokeId && (obj.type === 'line' || obj.type === 'eraser')
+              ? {
+                  ...obj,
+                  points: [...(obj.points || []), pos],
+                }
+              : obj,
+          ),
+        );
+
         lastPointRef.current = pos;
-        sendDrawingPoint(pos.x, pos.y);
-      } else if (tool === 'rectangle' || tool === 'circle' || tool === 'triangle') {
-        if (!lastPointRef.current) return;
-        redrawCanvas();
-
-        applyBrushConfig(ctx, brushConfig);
-
-        if (tool === 'rectangle') {
-          const width = pos.x - lastPointRef.current.x;
-          const height = pos.y - lastPointRef.current.y;
-          drawRectangle(ctx, lastPointRef.current.x, lastPointRef.current.y, width, height, shapesFilled);
-        } else if (tool === 'circle') {
-          const radius = Math.sqrt(
-            Math.pow(pos.x - lastPointRef.current.x, 2) + Math.pow(pos.y - lastPointRef.current.y, 2),
-          );
-          drawCircle(ctx, lastPointRef.current.x, lastPointRef.current.y, radius, shapesFilled);
-        } else if (tool === 'triangle') {
-          const midX = (lastPointRef.current.x + pos.x) / 2;
-          const topY = Math.min(lastPointRef.current.y, pos.y);
-          drawTriangle(
-            ctx,
-            midX,
-            topY,
-            lastPointRef.current.x,
-            Math.max(lastPointRef.current.y, pos.y),
-            pos.x,
-            Math.max(lastPointRef.current.y, pos.y),
-            shapesFilled,
-          );
+        if (tool === 'brush') {
+          sendDrawingPoint(pos.x, pos.y);
         }
       }
     };
@@ -366,6 +379,14 @@ export const DrawingCanvas = React.forwardRef<HTMLCanvasElement, DrawingCanvasPr
       if (!isDrawing) return;
       setIsDrawing(false);
 
+      if (tool === 'brush' || tool === 'eraser') {
+        setCurrentStrokeId(null);
+        if (onDrawEnd) {
+          onDrawEnd(Date.now());
+        }
+        return;
+      }
+
       if (!lastPointRef.current || !currentPointRef.current) {
         lastPointRef.current = null;
         return;
@@ -374,7 +395,6 @@ export const DrawingCanvas = React.forwardRef<HTMLCanvasElement, DrawingCanvasPr
       const startPoint = lastPointRef.current;
       const pos = currentPointRef.current;
 
-      // Добавляем созданные фигуры в объекты
       if (tool === 'rectangle') {
         const width = pos.x - lastPointRef.current.x;
         const height = pos.y - lastPointRef.current.y;
@@ -442,7 +462,7 @@ export const DrawingCanvas = React.forwardRef<HTMLCanvasElement, DrawingCanvasPr
       }
     };
 
-    // Touch события для мобильных устройств
+    // Touch события
     const handleTouchStart = (e: React.TouchEvent<HTMLCanvasElement>) => {
       e.preventDefault();
       const canvas = localCanvasRef.current;
@@ -479,12 +499,25 @@ export const DrawingCanvas = React.forwardRef<HTMLCanvasElement, DrawingCanvasPr
       setIsDrawing(true);
       strokeStartTimeRef.current = Date.now();
       lastPointRef.current = pos;
+      currentStrokeRef.current = [pos];
 
-      if (tool === 'brush') {
-        applyBrushConfig(ctx, brushConfig);
-        drawPoint(ctx, pos.x, pos.y);
+      if (tool === 'brush' || tool === 'eraser') {
+        const strokeId = Math.random().toString();
+        setCurrentStrokeId(strokeId);
 
-        if (onDrawStart) {
+        const newStroke: DrawObject = {
+          id: strokeId,
+          type: tool === 'eraser' ? 'eraser' : 'line',
+          x: pos.x,
+          y: pos.y,
+          points: [pos],
+          color: brushConfig.color,
+          size: brushConfig.size,
+        };
+
+        setObjects((prev) => [...prev, newStroke]);
+
+        if (onDrawStart && tool === 'brush') {
           onDrawStart(pos.x, pos.y, brushConfig.color, brushConfig.size);
         }
       }
@@ -522,13 +555,21 @@ export const DrawingCanvas = React.forwardRef<HTMLCanvasElement, DrawingCanvasPr
 
       if (!isDrawing) return;
 
-      const ctx = canvas.getContext('2d')!;
-
-      if (tool === 'brush' && lastPointRef.current) {
-        applyBrushConfig(ctx, brushConfig);
-        drawLine(ctx, lastPointRef.current.x, lastPointRef.current.y, pos.x, pos.y);
+      if ((tool === 'brush' || tool === 'eraser') && lastPointRef.current && currentStrokeId) {
+        setObjects((prev) =>
+          prev.map((obj) =>
+            obj.id === currentStrokeId && (obj.type === 'line' || obj.type === 'eraser')
+              ? {
+                  ...obj,
+                  points: [...(obj.points || []), pos],
+                }
+              : obj,
+          ),
+        );
         lastPointRef.current = pos;
-        sendDrawingPoint(pos.x, pos.y);
+        if (tool === 'brush') {
+          sendDrawingPoint(pos.x, pos.y);
+        }
       }
     };
 
@@ -541,11 +582,15 @@ export const DrawingCanvas = React.forwardRef<HTMLCanvasElement, DrawingCanvasPr
 
       if (!isDrawing) return;
       setIsDrawing(false);
-      lastPointRef.current = null;
 
-      if (onDrawEnd) {
-        onDrawEnd(Date.now());
+      if (tool === 'brush' || tool === 'eraser') {
+        setCurrentStrokeId(null);
+        if (onDrawEnd) {
+          onDrawEnd(Date.now());
+        }
       }
+
+      lastPointRef.current = null;
     };
 
     const handleAddText = () => {
@@ -619,132 +664,159 @@ export const DrawingCanvas = React.forwardRef<HTMLCanvasElement, DrawingCanvasPr
       setEditingObjectId(null);
     };
 
-    return (
-      <div className="flex flex-col gap-4">
-        {/* Toolbar - Tools */}
-        <div className="flex gap-2 bg-white p-4 rounded-lg shadow-sm border border-gray-200 flex-wrap">
-          <div className="flex gap-2 border-r pr-3">
-            <button
-              onClick={() => setTool('brush')}
-              className={`px-3 py-2 rounded text-sm font-medium transition-colors ${
-                tool === 'brush'
-                  ? 'bg-blue-500 text-white'
-                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-              }`}
-              title="Кисть"
-            >
-              🖌️ Кисть
-            </button>
-            <button
-              onClick={() => setTool('text')}
-              className={`px-3 py-2 rounded text-sm font-medium transition-colors ${
-                tool === 'text'
-                  ? 'bg-blue-500 text-white'
-                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-              }`}
-              title="Текст"
-            >
-              📝 Текст
-            </button>
-          </div>
+    const handleClearAll = () => {
+      setObjects([]);
+      setSelectedObjectId(null);
+      setEditingObjectId(null);
+    };
 
-          <div className="flex gap-2 border-r pr-3">
+    const bgColorClass = isDarkTheme ? 'bg-gray-800 text-white' : 'bg-gray-100 text-gray-900';
+    const toolbarBgClass = isDarkTheme ? 'bg-gray-700 border-gray-600' : 'bg-white border-gray-200';
+    const buttonBgClass = isDarkTheme ? 'bg-gray-600 text-white hover:bg-gray-500' : 'bg-gray-100 text-gray-700 hover:bg-gray-200';
+    const canvasBgClass = isDarkTheme ? 'bg-gray-900' : 'bg-white';
+
+    return (
+      <div className={`flex flex-col gap-4 ${bgColorClass} p-4 rounded-lg`}>
+        {/* Main Toolbar - 3 Primary Tools */}
+        <div className={`flex gap-3 ${toolbarBgClass} p-3 rounded-lg shadow-sm border`}>
+          <button
+            onClick={() => {
+              setTool('brush');
+              setShowShapesMenu(false);
+            }}
+            className={`px-4 py-2 rounded font-medium transition-colors ${
+              tool === 'brush'
+                ? 'bg-blue-500 text-white'
+                : buttonBgClass
+            }`}
+            title="Кисть"
+          >
+            🖌️ Кисть
+          </button>
+
+          <button
+            onClick={() => {
+              setTool('text');
+              setShowShapesMenu(false);
+            }}
+            className={`px-4 py-2 rounded font-medium transition-colors ${
+              tool === 'text'
+                ? 'bg-blue-500 text-white'
+                : buttonBgClass
+            }`}
+            title="Текст"
+          >
+            📝 Текст
+          </button>
+
+          <div className="relative">
             <button
-              onClick={() => setTool('rectangle')}
-              className={`px-3 py-2 rounded text-sm font-medium transition-colors ${
-                tool === 'rectangle'
+              onClick={() => setShowShapesMenu(!showShapesMenu)}
+              className={`px-4 py-2 rounded font-medium transition-colors ${
+                ['rectangle', 'circle', 'triangle'].includes(tool)
                   ? 'bg-blue-500 text-white'
-                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                  : buttonBgClass
               }`}
-              title="Квадрат"
+              title="Фигуры"
             >
-              ◽ Квадрат
+              ⬜ Фигуры ▼
             </button>
-            <button
-              onClick={() => setTool('circle')}
-              className={`px-3 py-2 rounded text-sm font-medium transition-colors ${
-                tool === 'circle'
-                  ? 'bg-blue-500 text-white'
-                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-              }`}
-              title="Круг"
-            >
-              ⭕ Круг
-            </button>
-            <button
-              onClick={() => setTool('triangle')}
-              className={`px-3 py-2 rounded text-sm font-medium transition-colors ${
-                tool === 'triangle'
-                  ? 'bg-blue-500 text-white'
-                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-              }`}
-              title="Треугольник"
-            >
-              △ Треугольник
-            </button>
-            {['rectangle', 'circle', 'triangle'].includes(tool) && (
-              <label className="flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={shapesFilled}
-                  onChange={(e) => setShapesFilled(e.target.checked)}
-                  className="cursor-pointer"
-                />
-                <span className="text-gray-700">Заполнить</span>
-              </label>
+            {showShapesMenu && (
+              <div className={`absolute top-full left-0 mt-1 ${toolbarBgClass} border rounded-lg shadow-lg p-2 z-50 flex flex-col gap-1`}>
+                <button
+                  onClick={() => {
+                    setTool('rectangle');
+                    setShowShapesMenu(false);
+                  }}
+                  className={`px-3 py-2 rounded text-sm font-medium transition-colors ${
+                    tool === 'rectangle'
+                      ? 'bg-blue-500 text-white'
+                      : buttonBgClass
+                  }`}
+                >
+                  ◽ Квадрат
+                </button>
+                <button
+                  onClick={() => {
+                    setTool('circle');
+                    setShowShapesMenu(false);
+                  }}
+                  className={`px-3 py-2 rounded text-sm font-medium transition-colors ${
+                    tool === 'circle'
+                      ? 'bg-blue-500 text-white'
+                      : buttonBgClass
+                  }`}
+                >
+                  ⭕ Круг
+                </button>
+                <button
+                  onClick={() => {
+                    setTool('triangle');
+                    setShowShapesMenu(false);
+                  }}
+                  className={`px-3 py-2 rounded text-sm font-medium transition-colors ${
+                    tool === 'triangle'
+                      ? 'bg-blue-500 text-white'
+                      : buttonBgClass
+                  }`}
+                >
+                  △ Треугольник
+                </button>
+                {['rectangle', 'circle', 'triangle'].includes(tool) && (
+                  <label className="flex items-center gap-2 text-sm px-3 py-2 border-t mt-1">
+                    <input
+                      type="checkbox"
+                      checked={shapesFilled}
+                      onChange={(e) => setShapesFilled(e.target.checked)}
+                      className="cursor-pointer"
+                    />
+                    <span>Заполнить</span>
+                  </label>
+                )}
+              </div>
             )}
           </div>
 
-          <div className="flex gap-2">
+          {/* Right-aligned buttons */}
+          <div className="ml-auto flex gap-2">
             <button
-              onClick={() => setTool('eyedropper')}
-              className={`px-3 py-2 rounded text-sm font-medium transition-colors ${
-                tool === 'eyedropper'
-                  ? 'bg-blue-500 text-white'
-                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+              onClick={() => {
+                setTool('eraser');
+                setShowShapesMenu(false);
+              }}
+              className={`px-4 py-2 rounded font-medium transition-colors ${
+                tool === 'eraser'
+                  ? 'bg-red-500 text-white'
+                  : `${buttonBgClass}`
               }`}
-              title="Пипетка"
+              title="Стерать"
             >
-              🎨 Пипетка
+              🧹 Стерать
             </button>
+
             <button
-              onClick={() => setTool('move')}
-              className={`px-3 py-2 rounded text-sm font-medium transition-colors ${
-                tool === 'move'
-                  ? 'bg-blue-500 text-white'
-                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-              }`}
-              title="Перемещение"
+              onClick={() => setIsDarkTheme(!isDarkTheme)}
+              className={`px-4 py-2 rounded font-medium transition-colors ${buttonBgClass}`}
+              title="Переключить тему"
             >
-              ↔️ Перемещать
+              {isDarkTheme ? '☀️ Свет' : '🌙 Темная'}
+            </button>
+
+            <button
+              onClick={handleClearAll}
+              className="px-4 py-2 bg-red-500 text-white rounded font-medium hover:bg-red-600 transition-colors"
+              title="Очистить холст"
+            >
+              ✕ Очистить
             </button>
           </div>
-
-          {selectedObject && (
-            <div className="flex gap-2 border-l pl-3">
-              {selectedObject.type === 'text' && (
-                <button
-                  onClick={handleEditSelectedText}
-                  className="px-3 py-2 rounded text-sm font-medium bg-amber-100 text-amber-800 hover:bg-amber-200 transition-colors"
-                >
-                  Редактировать
-                </button>
-              )}
-              <button
-                onClick={handleDeleteSelectedObject}
-                className="px-3 py-2 rounded text-sm font-medium bg-red-100 text-red-700 hover:bg-red-200 transition-colors"
-              >
-                Удалить
-              </button>
-            </div>
-          )}
         </div>
 
-        {/* Toolbar - Color & Size */}
-        <div className="flex gap-3 items-center bg-white p-4 rounded-lg shadow-sm border border-gray-200 flex-wrap">
-          {/* Цвет */}
+        {/* Settings Toolbar */}
+        <div className={`flex gap-3 items-center ${toolbarBgClass} p-3 rounded-lg shadow-sm border flex-wrap`}>
+          {/* Color Picker */}
           <div className="flex items-center gap-2">
-            <label className="text-sm font-medium text-gray-700">Цвет:</label>
+            <label className="font-medium text-sm">Цвет:</label>
             <input
               type="color"
               value={brushConfig.color}
@@ -753,10 +825,10 @@ export const DrawingCanvas = React.forwardRef<HTMLCanvasElement, DrawingCanvasPr
             />
           </div>
 
-          {/* Размер кисти */}
+          {/* Brush Size */}
           {tool === 'brush' && (
             <div className="flex items-center gap-2">
-              <label className="text-sm font-medium text-gray-700">Размер:</label>
+              <label className="font-medium text-sm">Размер:</label>
               <input
                 type="range"
                 min="1"
@@ -765,14 +837,30 @@ export const DrawingCanvas = React.forwardRef<HTMLCanvasElement, DrawingCanvasPr
                 onChange={(e) => setBrushConfig({ ...brushConfig, size: parseInt(e.target.value) })}
                 className="w-32"
               />
-              <span className="text-sm text-gray-500 w-8">{brushConfig.size}px</span>
+              <span className="text-sm w-10">{brushConfig.size}px</span>
             </div>
           )}
 
-          {/* Размер шрифта */}
+          {/* Eraser Size */}
+          {tool === 'eraser' && (
+            <div className="flex items-center gap-2">
+              <label className="font-medium text-sm">Размер:</label>
+              <input
+                type="range"
+                min="5"
+                max="50"
+                value={brushConfig.size}
+                onChange={(e) => setBrushConfig({ ...brushConfig, size: parseInt(e.target.value) })}
+                className="w-32"
+              />
+              <span className="text-sm w-10">{brushConfig.size}px</span>
+            </div>
+          )}
+
+          {/* Font Size */}
           {tool === 'text' && (
             <div className="flex items-center gap-2">
-              <label className="text-sm font-medium text-gray-700">Шрифт:</label>
+              <label className="font-medium text-sm">Шрифт:</label>
               <input
                 type="range"
                 min="8"
@@ -781,14 +869,14 @@ export const DrawingCanvas = React.forwardRef<HTMLCanvasElement, DrawingCanvasPr
                 onChange={(e) => setFontSize(parseInt(e.target.value))}
                 className="w-32"
               />
-              <span className="text-sm text-gray-500 w-8">{fontSize}px</span>
+              <span className="text-sm w-10">{fontSize}px</span>
             </div>
           )}
 
-          {/* Размер кисти для фигур */}
+          {/* Shape Line Width */}
           {['rectangle', 'circle', 'triangle'].includes(tool) && (
             <div className="flex items-center gap-2">
-              <label className="text-sm font-medium text-gray-700">Толщина линии:</label>
+              <label className="font-medium text-sm">Толщина:</label>
               <input
                 type="range"
                 min="1"
@@ -797,25 +885,30 @@ export const DrawingCanvas = React.forwardRef<HTMLCanvasElement, DrawingCanvasPr
                 onChange={(e) => setBrushConfig({ ...brushConfig, size: parseInt(e.target.value) })}
                 className="w-32"
               />
-              <span className="text-sm text-gray-500 w-8">{brushConfig.size}px</span>
+              <span className="text-sm w-10">{brushConfig.size}px</span>
             </div>
           )}
-
-          {/* Очистить холст */}
-          <button
-            onClick={() => {
-              const canvas = localCanvasRef.current;
-              if (canvas) {
-                const ctx = canvas.getContext('2d')!;
-                ctx.fillStyle = 'white';
-                ctx.fillRect(0, 0, canvas.clientWidth, canvas.clientHeight);
-              }
-            }}
-            className="ml-auto px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600 transition-colors text-sm font-medium"
-          >
-            Очистить
-          </button>
         </div>
+
+        {/* Selected Object Actions */}
+        {selectedObject && (
+          <div className={`flex gap-2 ${toolbarBgClass} p-3 rounded-lg shadow-sm border`}>
+            {selectedObject.type === 'text' && (
+              <button
+                onClick={handleEditSelectedText}
+                className="px-4 py-2 rounded font-medium bg-amber-500 text-white hover:bg-amber-600 transition-colors"
+              >
+                ✏️ Редактировать
+              </button>
+            )}
+            <button
+              onClick={handleDeleteSelectedObject}
+              className="px-4 py-2 rounded font-medium bg-red-500 text-white hover:bg-red-600 transition-colors"
+            >
+              🗑️ Удалить
+            </button>
+          </div>
+        )}
 
         {/* Canvas */}
         <canvas
@@ -827,22 +920,26 @@ export const DrawingCanvas = React.forwardRef<HTMLCanvasElement, DrawingCanvasPr
           onTouchStart={handleTouchStart}
           onTouchMove={handleTouchMove}
           onTouchEnd={handleTouchEnd}
-          className="border-2 border-gray-300 rounded-lg bg-white cursor-crosshair shadow-md"
+          className={`border-2 rounded-lg cursor-crosshair shadow-md ${canvasBgClass} border-blue-400`}
           style={{ width: '100%', height: '600px', display: 'block' }}
         />
 
         {/* Text Modal */}
         {showTextModal && (
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[9999]">
-            <div className="bg-white p-6 rounded-lg shadow-2xl w-96">
-              <h2 className="text-xl font-bold mb-4 text-gray-800">
+            <div className={`${bgColorClass} p-6 rounded-lg shadow-2xl w-96 border`}>
+              <h2 className="text-xl font-bold mb-4">
                 {editingObjectId ? 'Редактировать текст' : 'Добавить текст'}
               </h2>
               <textarea
                 value={textInput}
                 onChange={(e) => setTextInput(e.target.value)}
                 placeholder="Введите текст..."
-                className="w-full p-3 border-2 border-gray-300 rounded mb-4 resize-none h-24 text-gray-900 placeholder-gray-400 focus:outline-none focus:border-blue-500"
+                className={`w-full p-3 border-2 rounded mb-4 resize-none h-24 focus:outline-none focus:border-blue-500 ${
+                  isDarkTheme 
+                    ? 'bg-gray-600 border-gray-500 text-white placeholder-gray-400' 
+                    : 'bg-white border-gray-300 text-gray-900 placeholder-gray-400'
+                }`}
                 autoFocus
                 onKeyPress={(e) => {
                   if (e.key === 'Enter' && e.ctrlKey) {
@@ -858,13 +955,13 @@ export const DrawingCanvas = React.forwardRef<HTMLCanvasElement, DrawingCanvasPr
                     setEditingObjectId(null);
                     lastPointRef.current = null;
                   }}
-                  className="px-4 py-2 bg-gray-300 text-gray-800 rounded hover:bg-gray-400 transition-colors font-medium"
+                  className={`px-4 py-2 rounded font-medium transition-colors ${buttonBgClass}`}
                 >
                   Отмена
                 </button>
                 <button
                   onClick={handleAddText}
-                  className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors font-medium"
+                  className="px-4 py-2 bg-blue-500 text-white rounded font-medium hover:bg-blue-600 transition-colors"
                 >
                   {editingObjectId ? 'Сохранить' : 'Добавить'}
                 </button>
@@ -873,9 +970,9 @@ export const DrawingCanvas = React.forwardRef<HTMLCanvasElement, DrawingCanvasPr
           </div>
         )}
 
-        {/* Информация */}
-        <div className="text-xs text-gray-500 text-center">
-          Статус: {isDrawing ? '🖌️ Рисование...' : '⏸️ Готово'} | Инструмент: {tool === 'brush' && 'Кисть'} {tool === 'text' && 'Текст'} {tool === 'rectangle' && 'Квадрат'} {tool === 'circle' && 'Круг'} {tool === 'triangle' && 'Треугольник'} {tool === 'eyedropper' && 'Пипетка'} {tool === 'move' && 'Перемещение'} | Объектов: {objects.length}
+        {/* Status Info */}
+        <div className="text-xs opacity-60 text-center">
+          Статус: {isDrawing ? '🖌️ Рисование...' : '⏸️ Готово'} | Инструмент: {tool === 'brush' && 'Кисть'}{tool === 'text' && 'Текст'}{tool === 'rectangle' && 'Квадрат'}{tool === 'circle' && 'Круг'}{tool === 'triangle' && 'Треугольник'}{tool === 'eraser' && 'Стерать'} | Объектов: {objects.length}
         </div>
       </div>
     );
@@ -883,3 +980,5 @@ export const DrawingCanvas = React.forwardRef<HTMLCanvasElement, DrawingCanvasPr
 );
 
 DrawingCanvas.displayName = 'DrawingCanvas';
+
+export default DrawingCanvas;
