@@ -982,3 +982,5 @@ export const DrawingCanvas = React.forwardRef<HTMLCanvasElement, DrawingCanvasPr
 DrawingCanvas.displayName = 'DrawingCanvas';
 
 export default DrawingCanvas;
+
+///гит это измениеgit status
