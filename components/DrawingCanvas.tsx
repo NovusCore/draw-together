@@ -45,6 +45,27 @@ interface DrawingCanvasProps {
   remoteStrokes?: Map<string, Array<{ x: number; y: number; color: string; size: number }>>;
 }
 
+interface DrawObject {
+  id: string;
+  type: 'line' | 'text' | 'rectangle' | 'circle' | 'triangle' | 'eraser';
+  x: number;
+  y: number;
+  points?: Array<{ x: number; y: number }>;
+  x2?: number;
+  y2?: number;
+  x3?: number;
+  y3?: number;
+  color: string;
+  size: number;
+  text?: string;
+  fontSize?: number;
+  fontFamily?: string;
+  filled?: boolean;
+  width?: number;
+  height?: number;
+  radius?: number;
+}
+
 export const DrawingCanvas = React.forwardRef<HTMLCanvasElement, DrawingCanvasProps>(
   (
     {
@@ -64,6 +85,7 @@ export const DrawingCanvas = React.forwardRef<HTMLCanvasElement, DrawingCanvasPr
     const [shapesFilled, setShapesFilled] = useState(false);
     const [textInput, setTextInput] = useState('');
     const [fontSize, setFontSize] = useState(16);
+    const [fontFamily, setFontFamily] = useState('Arial');
     const [showTextModal, setShowTextModal] = useState(false);
     const [editingObjectId, setEditingObjectId] = useState<string | null>(null);
     const [objects, setObjects] = useState<DrawObject[]>([]);
@@ -71,6 +93,7 @@ export const DrawingCanvas = React.forwardRef<HTMLCanvasElement, DrawingCanvasPr
     const [isDarkTheme, setIsDarkTheme] = useState(false);
     const [showShapesMenu, setShowShapesMenu] = useState(false);
     const [currentStrokeId, setCurrentStrokeId] = useState<string | null>(null);
+    const [eraserCursorPos, setEraserCursorPos] = useState<{ x: number; y: number } | null>(null);
     const lastPointRef = useRef<{ x: number; y: number } | null>(null);
     const currentPointRef = useRef<{ x: number; y: number } | null>(null);
     const currentStrokeRef = useRef<Array<{ x: number; y: number }>>([]);
@@ -106,8 +129,9 @@ export const DrawingCanvas = React.forwardRef<HTMLCanvasElement, DrawingCanvasPr
     const drawTextObject = (ctx: CanvasRenderingContext2D, obj: DrawObject) => {
       const lines = getTextLines(obj.text || '');
       const lineHeight = (obj.fontSize || 16) * 1.25;
+      const fontFamilyStr = obj.fontFamily || 'Arial';
 
-      ctx.font = `${obj.fontSize || 16}px Arial`;
+      ctx.font = `${obj.fontSize || 16}px ${fontFamilyStr}`;
       ctx.textBaseline = 'top';
       ctx.fillStyle = obj.color;
       lines.forEach((line, index) => {
@@ -119,10 +143,11 @@ export const DrawingCanvas = React.forwardRef<HTMLCanvasElement, DrawingCanvasPr
       const canvas = localCanvasRef.current;
       const ctx = canvas?.getContext('2d');
       const fontSizeValue = obj.fontSize || 16;
+      const fontFamilyStr = obj.fontFamily || 'Arial';
       const lines = getTextLines(obj.text || '');
 
       if (ctx) {
-        ctx.font = `${fontSizeValue}px Arial`;
+        ctx.font = `${fontSizeValue}px ${fontFamilyStr}`;
       }
 
       const width = Math.max(
@@ -192,7 +217,19 @@ export const DrawingCanvas = React.forwardRef<HTMLCanvasElement, DrawingCanvasPr
 
         ctx.setLineDash([]);
       });
-    }, [objects, selectedObjectId, isDarkTheme]);
+
+      // Draw eraser cursor preview
+      if (tool === 'eraser' && eraserCursorPos && !isDrawing) {
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.strokeStyle = isDarkTheme ? 'rgba(255, 255, 255, 0.5)' : 'rgba(0, 0, 0, 0.5)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(eraserCursorPos.x, eraserCursorPos.y, brushConfig.size / 2, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.closePath();
+        ctx.globalCompositeOperation = 'source-over';
+      }
+    }, [objects, selectedObjectId, isDarkTheme, tool, eraserCursorPos, isDrawing, brushConfig.size]);
 
     // Перерисовка при изменении объектов
     useEffect(() => {
@@ -322,6 +359,11 @@ export const DrawingCanvas = React.forwardRef<HTMLCanvasElement, DrawingCanvasPr
       const pos = getMousePos(canvas, e.nativeEvent);
       currentPointRef.current = pos;
 
+      // Update eraser cursor position
+      if (tool === 'eraser') {
+        setEraserCursorPos(pos);
+      }
+
       if (tool === 'move' && isDrawing && selectedObjectId && dragOffsetRef.current) {
         const newX = pos.x - dragOffsetRef.current.x;
         const newY = pos.y - dragOffsetRef.current.y;
@@ -364,6 +406,76 @@ export const DrawingCanvas = React.forwardRef<HTMLCanvasElement, DrawingCanvasPr
         lastPointRef.current = pos;
         if (tool === 'brush') {
           sendDrawingPoint(pos.x, pos.y);
+        }
+      } else if (tool === 'rectangle' || tool === 'circle' || tool === 'triangle') {
+        // Redraw canvas with preview for shapes
+        if (!lastPointRef.current) return;
+
+        const ctx = canvas.getContext('2d')!;
+        ctx.fillStyle = isDarkTheme ? '#1f2937' : 'white';
+        ctx.fillRect(0, 0, canvas.clientWidth, canvas.clientHeight);
+
+        // Draw all objects
+        objects.forEach((obj) => {
+          ctx.strokeStyle = obj.color;
+          ctx.fillStyle = obj.color;
+          ctx.lineWidth = obj.size;
+          ctx.lineCap = 'round';
+          ctx.lineJoin = 'round';
+          ctx.globalCompositeOperation = 'source-over';
+
+          if (obj.type === 'line' && obj.points && obj.points.length > 0) {
+            ctx.beginPath();
+            ctx.moveTo(obj.points[0].x, obj.points[0].y);
+            obj.points.slice(1).forEach((point) => {
+              ctx.lineTo(point.x, point.y);
+            });
+            ctx.stroke();
+            ctx.closePath();
+          } else if (obj.type === 'eraser' && obj.points && obj.points.length > 0) {
+            ctx.globalCompositeOperation = 'destination-out';
+            ctx.strokeStyle = 'rgba(0,0,0,1)';
+            ctx.beginPath();
+            ctx.moveTo(obj.points[0].x, obj.points[0].y);
+            obj.points.slice(1).forEach((point) => {
+              ctx.lineTo(point.x, point.y);
+            });
+            ctx.stroke();
+            ctx.closePath();
+            ctx.globalCompositeOperation = 'source-over';
+          } else if (obj.type === 'text') {
+            drawTextObject(ctx, obj);
+          } else if (obj.type === 'rectangle') {
+            drawRectangle(ctx, obj.x, obj.y, obj.width || 0, obj.height || 0, obj.filled);
+          } else if (obj.type === 'circle') {
+            drawCircle(ctx, obj.x, obj.y, obj.radius || 0, obj.filled);
+          } else if (obj.type === 'triangle') {
+            drawTriangle(ctx, obj.x, obj.y, obj.x2 || 0, obj.y2 || 0, obj.x3 || 0, obj.y3 || 0, obj.filled);
+          }
+        });
+
+        // Draw preview shape
+        ctx.strokeStyle = brushConfig.color;
+        ctx.fillStyle = brushConfig.color;
+        ctx.lineWidth = brushConfig.size;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.globalCompositeOperation = 'source-over';
+
+        if (tool === 'rectangle') {
+          const width = pos.x - lastPointRef.current.x;
+          const height = pos.y - lastPointRef.current.y;
+          drawRectangle(ctx, lastPointRef.current.x, lastPointRef.current.y, width, height, shapesFilled);
+        } else if (tool === 'circle') {
+          const radius = Math.sqrt(
+            Math.pow(pos.x - lastPointRef.current.x, 2) + Math.pow(pos.y - lastPointRef.current.y, 2),
+          );
+          drawCircle(ctx, lastPointRef.current.x, lastPointRef.current.y, radius, shapesFilled);
+        } else if (tool === 'triangle') {
+          const midX = (lastPointRef.current.x + pos.x) / 2;
+          const topY = Math.min(lastPointRef.current.y, pos.y);
+          const botY = Math.max(lastPointRef.current.y, pos.y);
+          drawTriangle(ctx, midX, topY, lastPointRef.current.x, botY, pos.x, botY, shapesFilled);
         }
       }
     };
@@ -460,6 +572,11 @@ export const DrawingCanvas = React.forwardRef<HTMLCanvasElement, DrawingCanvasPr
       if (onDrawEnd) {
         onDrawEnd(Date.now());
       }
+    };
+
+    const handleMouseLeave = () => {
+      setEraserCursorPos(null);
+      handleMouseUp();
     };
 
     // Touch события
@@ -570,6 +687,76 @@ export const DrawingCanvas = React.forwardRef<HTMLCanvasElement, DrawingCanvasPr
         if (tool === 'brush') {
           sendDrawingPoint(pos.x, pos.y);
         }
+      } else if (tool === 'rectangle' || tool === 'circle' || tool === 'triangle') {
+        // Redraw canvas with preview for shapes (touch)
+        if (!lastPointRef.current) return;
+
+        const ctx = canvas.getContext('2d')!;
+        ctx.fillStyle = isDarkTheme ? '#1f2937' : 'white';
+        ctx.fillRect(0, 0, canvas.clientWidth, canvas.clientHeight);
+
+        // Draw all objects
+        objects.forEach((obj) => {
+          ctx.strokeStyle = obj.color;
+          ctx.fillStyle = obj.color;
+          ctx.lineWidth = obj.size;
+          ctx.lineCap = 'round';
+          ctx.lineJoin = 'round';
+          ctx.globalCompositeOperation = 'source-over';
+
+          if (obj.type === 'line' && obj.points && obj.points.length > 0) {
+            ctx.beginPath();
+            ctx.moveTo(obj.points[0].x, obj.points[0].y);
+            obj.points.slice(1).forEach((point) => {
+              ctx.lineTo(point.x, point.y);
+            });
+            ctx.stroke();
+            ctx.closePath();
+          } else if (obj.type === 'eraser' && obj.points && obj.points.length > 0) {
+            ctx.globalCompositeOperation = 'destination-out';
+            ctx.strokeStyle = 'rgba(0,0,0,1)';
+            ctx.beginPath();
+            ctx.moveTo(obj.points[0].x, obj.points[0].y);
+            obj.points.slice(1).forEach((point) => {
+              ctx.lineTo(point.x, point.y);
+            });
+            ctx.stroke();
+            ctx.closePath();
+            ctx.globalCompositeOperation = 'source-over';
+          } else if (obj.type === 'text') {
+            drawTextObject(ctx, obj);
+          } else if (obj.type === 'rectangle') {
+            drawRectangle(ctx, obj.x, obj.y, obj.width || 0, obj.height || 0, obj.filled);
+          } else if (obj.type === 'circle') {
+            drawCircle(ctx, obj.x, obj.y, obj.radius || 0, obj.filled);
+          } else if (obj.type === 'triangle') {
+            drawTriangle(ctx, obj.x, obj.y, obj.x2 || 0, obj.y2 || 0, obj.x3 || 0, obj.y3 || 0, obj.filled);
+          }
+        });
+
+        // Draw preview shape
+        ctx.strokeStyle = brushConfig.color;
+        ctx.fillStyle = brushConfig.color;
+        ctx.lineWidth = brushConfig.size;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.globalCompositeOperation = 'source-over';
+
+        if (tool === 'rectangle') {
+          const width = pos.x - lastPointRef.current.x;
+          const height = pos.y - lastPointRef.current.y;
+          drawRectangle(ctx, lastPointRef.current.x, lastPointRef.current.y, width, height, shapesFilled);
+        } else if (tool === 'circle') {
+          const radius = Math.sqrt(
+            Math.pow(pos.x - lastPointRef.current.x, 2) + Math.pow(pos.y - lastPointRef.current.y, 2),
+          );
+          drawCircle(ctx, lastPointRef.current.x, lastPointRef.current.y, radius, shapesFilled);
+        } else if (tool === 'triangle') {
+          const midX = (lastPointRef.current.x + pos.x) / 2;
+          const topY = Math.min(lastPointRef.current.y, pos.y);
+          const botY = Math.max(lastPointRef.current.y, pos.y);
+          drawTriangle(ctx, midX, topY, lastPointRef.current.x, botY, pos.x, botY, shapesFilled);
+        }
       }
     };
 
@@ -604,6 +791,7 @@ export const DrawingCanvas = React.forwardRef<HTMLCanvasElement, DrawingCanvasPr
                   ...obj,
                   text: textInput,
                   fontSize,
+                  fontFamily,
                   color: brushConfig.color,
                   size: brushConfig.size,
                 }
@@ -630,6 +818,7 @@ export const DrawingCanvas = React.forwardRef<HTMLCanvasElement, DrawingCanvasPr
           y: textPoint.y,
           text: textInput,
           fontSize,
+          fontFamily,
           color: brushConfig.color,
           size: brushConfig.size,
         },
@@ -648,6 +837,7 @@ export const DrawingCanvas = React.forwardRef<HTMLCanvasElement, DrawingCanvasPr
       setEditingObjectId(selectedObject.id);
       setTextInput(selectedObject.text || '');
       setFontSize(selectedObject.fontSize || fontSize);
+      setFontFamily(selectedObject.fontFamily || 'Arial');
       setBrushConfig((prev) => ({
         ...prev,
         color: selectedObject.color,
@@ -859,18 +1049,42 @@ export const DrawingCanvas = React.forwardRef<HTMLCanvasElement, DrawingCanvasPr
 
           {/* Font Size */}
           {tool === 'text' && (
-            <div className="flex items-center gap-2">
-              <label className="font-medium text-sm">Шрифт:</label>
-              <input
-                type="range"
-                min="8"
-                max="72"
-                value={fontSize}
-                onChange={(e) => setFontSize(parseInt(e.target.value))}
-                className="w-32"
-              />
-              <span className="text-sm w-10">{fontSize}px</span>
-            </div>
+            <>
+              <div className="flex items-center gap-2">
+                <label className="font-medium text-sm">Размер:</label>
+                <input
+                  type="range"
+                  min="8"
+                  max="72"
+                  value={fontSize}
+                  onChange={(e) => setFontSize(parseInt(e.target.value))}
+                  className="w-32"
+                />
+                <span className="text-sm w-10">{fontSize}px</span>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <label className="font-medium text-sm">Шрифт:</label>
+                <select
+                  value={fontFamily}
+                  onChange={(e) => setFontFamily(e.target.value)}
+                  className={`px-3 py-1 rounded cursor-pointer ${
+                    isDarkTheme
+                      ? 'bg-gray-600 border-gray-500 text-white'
+                      : 'bg-white border-gray-300 text-gray-900'
+                  } border`}
+                >
+                  <option value="Arial">Arial</option>
+                  <option value="Times New Roman">Times New Roman</option>
+                  <option value="Courier New">Courier New</option>
+                  <option value="Georgia">Georgia</option>
+                  <option value="Verdana">Verdana</option>
+                  <option value="Comic Sans MS">Comic Sans MS</option>
+                  <option value="Trebuchet MS">Trebuchet MS</option>
+                  <option value="Impact">Impact</option>
+                </select>
+              </div>
+            </>
           )}
 
           {/* Shape Line Width */}
@@ -916,11 +1130,13 @@ export const DrawingCanvas = React.forwardRef<HTMLCanvasElement, DrawingCanvasPr
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
-          onMouseLeave={handleMouseUp}
+          onMouseLeave={handleMouseLeave}
           onTouchStart={handleTouchStart}
           onTouchMove={handleTouchMove}
           onTouchEnd={handleTouchEnd}
-          className={`border-2 rounded-lg cursor-crosshair shadow-md ${canvasBgClass} border-blue-400`}
+          className={`border-2 rounded-lg shadow-md ${canvasBgClass} border-blue-400 ${
+            tool === 'eraser' ? 'cursor-none' : 'cursor-crosshair'
+          }`}
           style={{ width: '100%', height: '600px', display: 'block' }}
         />
 
