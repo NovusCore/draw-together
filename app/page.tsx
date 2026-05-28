@@ -8,6 +8,42 @@ export default function Home() {
   const [roomId, setRoomId] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
+  const getRoomIdFromInput = (value: string) => {
+    const trimmedValue = value.trim();
+
+    try {
+      const url = new URL(trimmedValue);
+      const roomIdFromPath = url.pathname.match(/^\/room\/(.+)$/)?.[1];
+      return roomIdFromPath ? decodeURIComponent(roomIdFromPath) : trimmedValue;
+    } catch {
+      const roomIdFromPath = trimmedValue.match(/^\/?room\/(.+)$/)?.[1];
+      return roomIdFromPath ? decodeURIComponent(roomIdFromPath) : trimmedValue;
+    }
+  };
+
+  const handleRoomIdPaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
+    const pastedText = e.clipboardData.getData('text');
+    const pastedRoomId = getRoomIdFromInput(pastedText);
+
+    if (pastedRoomId) {
+      e.preventDefault();
+      setRoomId(pastedRoomId);
+    }
+  };
+
+  const handlePasteRoomId = async () => {
+    try {
+      const clipboardText = await navigator.clipboard.readText();
+      const pastedRoomId = getRoomIdFromInput(clipboardText);
+
+      if (pastedRoomId) {
+        setRoomId(pastedRoomId);
+      }
+    } catch {
+      // Browser permissions can block programmatic clipboard access.
+    }
+  };
+
   const handleCreateRoom = () => {
     setIsLoading(true);
     // Генерируем уникальный ID комнаты
@@ -20,11 +56,12 @@ export default function Home() {
 
   const handleJoinRoom = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!roomId.trim()) return;
+    const normalizedRoomId = getRoomIdFromInput(roomId);
+    if (!normalizedRoomId) return;
 
     setIsLoading(true);
     setTimeout(() => {
-      router.push(`/room/${roomId}`);
+      router.push(`/room/${encodeURIComponent(normalizedRoomId)}`);
       setIsLoading(false);
     }, 300);
   };
@@ -61,13 +98,23 @@ export default function Home() {
 
           {/* Присоединение к существующей комнате */}
           <form onSubmit={handleJoinRoom} className="space-y-4">
-            <input
-              type="text"
-              placeholder="ID комнаты"
-              value={roomId}
-              onChange={(e) => setRoomId(e.target.value)}
-              className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-indigo-500 font-mono text-sm"
-            />
+            <div className="flex gap-2">
+              <input
+                type="text"
+                placeholder="ID комнаты"
+                value={roomId}
+                onChange={(e) => setRoomId(e.target.value)}
+                onPaste={handleRoomIdPaste}
+                className="min-w-0 flex-1 px-4 py-3 border-2 border-gray-300 rounded-lg bg-white text-gray-900 placeholder-gray-400 caret-indigo-600 focus:outline-none focus:border-indigo-500 font-mono text-sm"
+              />
+              <button
+                type="button"
+                onClick={handlePasteRoomId}
+                className="shrink-0 px-4 py-3 bg-indigo-100 text-indigo-700 font-semibold rounded-lg hover:bg-indigo-200 transition-colors text-sm"
+              >
+                Вставить
+              </button>
+            </div>
             <button
               type="submit"
               disabled={!roomId.trim() || isLoading}
