@@ -105,7 +105,7 @@ export const DrawingCanvas = React.forwardRef<HTMLCanvasElement, DrawingCanvasPr
       const canvas = localCanvasRef.current;
       if (!canvas) return;
 
-      const resizeCanvas = () => {
+      const setupCanvas = () => {
         setupCanvasForRetina(canvas);
 
         const ctx = canvas.getContext('2d')!;
@@ -113,15 +113,19 @@ export const DrawingCanvas = React.forwardRef<HTMLCanvasElement, DrawingCanvasPr
         ctx.fillRect(0, 0, canvas.clientWidth, canvas.clientHeight);
       };
 
-      resizeCanvas();
+      setupCanvas();
+      redrawCanvas();
 
-      const resizeObserver = new ResizeObserver(resizeCanvas);
+      const resizeObserver = new ResizeObserver(() => {
+        setupCanvas();
+        redrawCanvas();
+      });
       resizeObserver.observe(canvas);
 
       return () => {
         resizeObserver.disconnect();
       };
-    }, [isDarkTheme]);
+    }, [isDarkTheme, redrawCanvas]);
 
     // Перерисовка всех объектов
     const getTextLines = (text: string) => text.split(/\r?\n/);
@@ -1142,7 +1146,7 @@ export const DrawingCanvas = React.forwardRef<HTMLCanvasElement, DrawingCanvasPr
 
         {/* Text Modal */}
         {showTextModal && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[9999]">
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
             <div className={`${bgColorClass} p-6 rounded-lg shadow-2xl w-96 border`}>
               <h2 className="text-xl font-bold mb-4">
                 {editingObjectId ? 'Редактировать текст' : 'Добавить текст'}
